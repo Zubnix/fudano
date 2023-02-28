@@ -1,4 +1,4 @@
-Fudano - Fast Udp DAtaChannels for NOde
+Fudano - Fast Udp DAta-channels for NOde
 ==
 
 Clone of [werift](https://github.com/shinyoshiaki/werift-webrtc) (v.0.18.1) which is a WebRTC Implementation in pure TypeScript.
