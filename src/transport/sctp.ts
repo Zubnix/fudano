@@ -10,8 +10,6 @@ import {
   WEBRTC_BINARY,
   WEBRTC_BINARY_EMPTY,
   WEBRTC_DCEP,
-  WEBRTC_STRING,
-  WEBRTC_STRING_EMPTY,
 } from '../const'
 import { DCState, RTCDataChannel, RTCDataChannelParameters } from '../dataChannel'
 import { RTCDtlsTransport } from './dtls'
@@ -82,7 +80,10 @@ export class RTCSctpTransport {
           }
         }),
       ].map((e) => e.unSubscribe),
-      () => (this.sctp.onSackReceived = () => {}),
+      () =>
+        (this.sctp.onSackReceived = () => {
+          /*noop*/
+        }),
     ]
 
     this.sctp.onSackReceived = () => {
@@ -166,16 +167,12 @@ export class RTCSctpTransport {
       if (channel) {
         const msg = (() => {
           switch (ppId) {
-            case WEBRTC_STRING:
-              return data.toString('utf8')
-            case WEBRTC_STRING_EMPTY:
-              return ''
             case WEBRTC_BINARY:
               return data
             case WEBRTC_BINARY_EMPTY:
               return Buffer.from([])
             default:
-              throw new Error()
+              throw new Error('Unsupported payload received.')
           }
         })()
 
@@ -284,12 +281,10 @@ export class RTCSctpTransport {
     }
   }
 
-  datachannelSend = (channel: RTCDataChannel, data: Buffer | string) => {
+  datachannelSend = (channel: RTCDataChannel, data: Buffer) => {
     channel.addBufferedAmount(data.length)
 
-    this.dataChannelQueue.push(
-      typeof data === 'string' ? [channel, WEBRTC_STRING, Buffer.from(data)] : [channel, WEBRTC_BINARY, data],
-    )
+    this.dataChannelQueue.push([channel, WEBRTC_BINARY, data])
 
     if (this.sctp.associationState !== SCTP_STATE.ESTABLISHED) {
       log('sctp not established', this.sctp.associationState)
@@ -318,7 +313,9 @@ export class RTCSctpTransport {
   }
 
   stop() {
-    this.dtlsTransport.dataReceiver = () => {}
+    this.dtlsTransport.dataReceiver = () => {
+      /*noop*/
+    }
     this.sctp.stop()
   }
 
@@ -354,5 +351,7 @@ class BridgeDtls implements Transport {
   readonly send = (data: Buffer) => {
     return this.dtls.sendData(data)
   }
-  close() {}
+  close() {
+    /*noop*/
+  }
 }

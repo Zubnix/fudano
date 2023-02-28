@@ -120,7 +120,7 @@ export class RTCDataChannel extends EventTarget {
     }
   }
 
-  send(data: Buffer | string) {
+  send(data: Buffer) {
     this.transport.datachannelSend(this, data)
   }
 
