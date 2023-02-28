@@ -1,0 +1,54 @@
+{
+  "name": "werift-ud",
+  "version": "0.18.1",
+  "keywords": [],
+  "main": "dist/index.js",
+  "typings": "types/index.d.ts",
+  "files": [
+    "dist",
+    "types"
+  ],
+  "scripts": {
+    "prebuild": "rm -rf dist types",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@fidm/x509": "^1.2.1",
+    "@peculiar/webcrypto": "^1.4.1",
+    "@peculiar/x509": "^1.9.3",
+    "binary-data": "^0.6.0",
+    "buffer-crc32": "^0.2.13",
+    "date-fns": "^2.29.3",
+    "debug": "^4.3.4",
+    "elliptic": "^6.5.4",
+    "int64-buffer": "^1.0.1",
+    "ip": "^1.1.8",
+    "jspack": "^0.0.4",
+    "lodash": "^4.17.21",
+    "p-cancelable": "^2.1.1",
+    "rx.mini": "^1.2.2",
+    "turbo-crc32": "^1.0.1",
+    "uuid": "^9.0.0",
+    "big-integer": "^1.6.51"
+  },
+  "devDependencies": {
+    "@tsconfig/node18": "^1.0.1",
+    "@types/buffer-crc32": "^0.2.2",
+    "@types/debug": "^4.1.7",
+    "@types/elliptic": "^6.4.14",
+    "@types/ip": "^1.1.0",
+    "@types/lodash": "^4.14.191",
+    "@types/node": "^18.14.2",
+    "@types/uuid": "^9.0.1",
+    "@typescript-eslint/eslint-plugin": "^5.53.0",
+    "@typescript-eslint/parser": "^5.53.0",
+    "eslint": "^8.35.0",
+    "eslint-config-prettier": "^8.6.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "prettier": "^2.8.4",
+    "typescript": "^4.9.5"
+  },
+  "author": "Erik De Rijcke",
+  "homepage": "https://www.greenfield.app",
+  "license": "AGPL-3.0-or-later"
+}

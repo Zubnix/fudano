@@ -1,0 +1,12 @@
+/types/
+/dist/
+/node_modules/
+/.idea/codeStyles/codeStyleConfig.xml
+/.idea/jsLinters/eslint.xml
+/.idea/jsLibraryMappings.xml
+/.idea/modules.xml
+/.idea/prettier.xml
+/.idea/codeStyles/Project.xml
+/.idea/inspectionProfiles/Project_Default.xml
+/.idea/vcs.xml
+/.idea/werift-unordered-datachannels.iml
