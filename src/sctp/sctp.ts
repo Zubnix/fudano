@@ -1,11 +1,10 @@
 import { createHmac, randomBytes } from 'crypto'
 import debug from 'debug'
 import { jspack } from 'jspack'
-import range from 'lodash/range'
 import { Event } from 'rx.mini'
 
 import { random32 } from '../common/binary'
-import { uint16Add, uint16Gt, uint32Gt, uint32Gte } from '../common/number'
+import { uint16Add, uint32Gt, uint32Gte } from '../common/number'
 import {
   AbortChunk,
   Chunk,
@@ -28,7 +27,7 @@ import {
   ShutdownCompleteChunk,
 } from './chunk'
 import { SCTP_STATE } from './const'
-import { createEventsFromList, enumerate, Unpacked } from './helper'
+import { createEventsFromList, Unpacked } from './helper'
 import {
   OutgoingSSNResetRequestParam,
   RECONFIG_PARAM_BY_TYPES,
@@ -47,7 +46,7 @@ const log = debug('werift/sctp/sctp')
 const COOKIE_LENGTH = 24
 const COOKIE_LIFETIME = 60
 const MAX_STREAMS = 65535
-const USERDATA_MAX_LENGTH = 1200
+export const USERDATA_MAX_LENGTH = 1200
 
 // # protocol constants
 const SCTP_DATA_LAST_FRAG = 0x01
@@ -80,9 +79,6 @@ export class SCTP {
   readonly onReconfigStreams = new Event<[number[]]>()
   /**streamId: number, ppId: number, data: Buffer */
   readonly onReceive = new Event<[number, number, Buffer]>()
-  onSackReceived: () => void = () => {
-    /*noop*/
-  }
 
   associationState = SCTP_STATE.CLOSED
   started = false
@@ -91,17 +87,16 @@ export class SCTP {
 
   private hmacKey = randomBytes(16)
   private localPartialReliability = true
-  private localPort: number
+  private readonly localPort: number
   private localVerificationTag = random32()
 
   remoteExtensions: number[] = []
-  remotePartialReliability = true
+  remotePartialReliability = false
   private remotePort?: number
   private remoteVerificationTag = 0
 
   // inbound
-  private advertisedRwnd = 1024 * 1024 // Receiver Window
-  private inboundStreams: { [key: number]: InboundStream } = {}
+  private advertisedRwnd = 16 * 256 * 1200 // Receiver Window
   _inboundStreamsCount = 0
   _inboundStreamsMax = MAX_STREAMS
   private lastReceivedTsn?: number // Transmission Sequence Number
@@ -110,26 +105,17 @@ export class SCTP {
   private sackNeeded = false
 
   // # outbound
-  private cwnd = 3 * USERDATA_MAX_LENGTH // Congestion Window
-  private fastRecoveryExit?: number
-  private fastRecoveryTransmit = false
-  private forwardTsnChunk?: ForwardTsnChunk
   private flightSize = 0
-  outboundQueue: DataChunk[] = []
   private outboundStreamSeq: { [streamId: number]: number } = {}
   _outboundStreamsCount = MAX_STREAMS
   /**local transmission sequence number */
   private localTsn = Number(random32())
-  private lastSackedTsn = tsnMinusOne(this.localTsn)
-  private advancedPeerAckTsn = tsnMinusOne(this.localTsn) // acknowledgement
-  private partialBytesAcked = 0
-  private sentQueue: DataChunk[] = []
 
   // # reconfiguration
 
-  /**初期TSNと同じ値に初期化される単調に増加する数です. これは、新しいre-configuration requestパラメーターを送信するたびに1ずつ増加します */
+  /**is a monotonically increasing number that is initialized to the same value as the initial TSN. This is incremented by 1 each time you send a new "re-configuration request" parameter */
   reconfigRequestSeq = this.localTsn
-  /**このフィールドは、incoming要求のre-configuration requestシーケンス番号を保持します. 他の場合では、次に予想されるre-configuration requestシーケンス番号から1を引いた値が保持されます */
+  /**This field holds the re-configuration request sequence number of the incoming request. In other cases, the next expected re-configuration request sequence number minus 1 is retained */
   reconfigResponseSeq = 0
   reconfigRequest?: OutgoingSSNResetRequestParam
   reconfigQueue: number[] = []
@@ -182,12 +168,8 @@ export class SCTP {
   private handleData(data: Buffer) {
     let expectedTag: number
 
-    const [, , verificationTag, chunks] = parsePacket(data)
-    const initChunk = chunks.filter((v) => v.type === InitChunk.type).length
-    if (initChunk > 0) {
-      if (chunks.length != 1) {
-        throw new Error()
-      }
+    const [, , verificationTag, chunk] = parsePacket(data)
+    if (chunk.type === InitChunk.type) {
       expectedTag = 0
     } else {
       expectedTag = this.localVerificationTag
@@ -197,9 +179,7 @@ export class SCTP {
       return
     }
 
-    for (const chunk of chunks) {
-      this.receiveChunk(chunk)
-    }
+    this.receiveChunk(chunk)
 
     if (this.sackNeeded) {
       this.sendSack()
@@ -417,7 +397,7 @@ export class SCTP {
 
           // # mark closed inbound streams
           for (const streamId of p.streams) {
-            delete this.inboundStreams[streamId]
+            // delete this.inboundStreams[streamId]
             if (this.outboundStreamSeq[streamId]) {
               this.reconfigQueue.push(streamId)
             }
@@ -465,17 +445,13 @@ export class SCTP {
 
   private receiveDataChunk(chunk: DataChunk) {
     this.sackNeeded = true
+    this.markReceived(chunk.tsn)
+    //
+    // const inboundStream = this.getInboundStream(chunk.streamId)
+    //
+    // inboundStream.addChunk(chunk)
 
-    if (this.markReceived(chunk.tsn)) return
-
-    const inboundStream = this.getInboundStream(chunk.streamId)
-
-    inboundStream.addChunk(chunk)
-    this.advertisedRwnd -= chunk.userData.length
-    for (const message of inboundStream.popMessages()) {
-      this.advertisedRwnd += message[2].length
-      this.receive(...message)
-    }
+    this.receive(chunk.streamId, chunk.protocol, chunk.userData)
   }
 
   receiveForwardTsnChunk(chunk: ForwardTsnChunk) {
@@ -501,23 +477,6 @@ export class SCTP {
     // # filter out obsolete entries
     this.sackDuplicates = this.sackDuplicates.filter(isObsolete)
     this.sackMisOrdered = new Set([...this.sackMisOrdered].filter(isObsolete))
-
-    // # update reassembly
-    for (const [streamId, streamSeqNum] of chunk.streams) {
-      const inboundStream = this.getInboundStream(streamId)
-
-      // # advance sequence number and perform delivery
-      inboundStream.streamSequenceNumber = uint16Add(streamSeqNum, 1)
-      for (const message of inboundStream.popMessages()) {
-        this.advertisedRwnd += message[2].length
-        this.receive(...message)
-      }
-    }
-
-    // # prune obsolete chunks
-    Object.values(this.inboundStreams).forEach((inboundStream) => {
-      this.advertisedRwnd += inboundStream.pruneChunks(this.lastReceivedTsn!)
-    })
   }
 
   private updateRto(R: number) {
@@ -533,13 +492,6 @@ export class SCTP {
 
   private receive(streamId: number, ppId: number, data: Buffer) {
     this.onReceive.execute(streamId, ppId, data)
-  }
-
-  private getInboundStream(streamId: number) {
-    if (!this.inboundStreams[streamId]) {
-      this.inboundStreams[streamId] = new InboundStream()
-    }
-    return this.inboundStreams[streamId]
   }
 
   private markReceived(tsn: number) {
@@ -565,7 +517,7 @@ export class SCTP {
     return false
   }
 
-  send = (
+  send(
     streamId: number,
     ppId: number,
     userData: Buffer,
@@ -578,101 +530,47 @@ export class SCTP {
       maxRetransmits?: number | undefined
       ordered?: boolean
     } = { expiry: undefined, maxRetransmits: undefined, ordered: true },
-  ) => {
+  ) {
     const streamSeqNum = ordered ? this.outboundStreamSeq[streamId] || 0 : 0
 
-    const fragments = Math.ceil(userData.length / USERDATA_MAX_LENGTH)
-    let pos = 0
-    const chunks: DataChunk[] = []
-    for (const fragment of range(0, fragments)) {
-      const chunk = new DataChunk(0, undefined)
-      chunk.flags = 0
-      if (!ordered) {
-        chunk.flags = SCTP_DATA_UNORDERED
-      }
-      if (fragment === 0) {
-        chunk.flags |= SCTP_DATA_FIRST_FRAG
-      }
-      if (fragment === fragments - 1) {
-        chunk.flags |= SCTP_DATA_LAST_FRAG
-      }
-      chunk.tsn = this.localTsn
-      chunk.streamId = streamId
-      chunk.streamSeqNum = streamSeqNum
-      chunk.protocol = ppId
-      chunk.userData = userData.slice(pos, pos + USERDATA_MAX_LENGTH)
-      chunk.bookSize = chunk.userData.length
-      chunk.expiry = expiry
-      chunk.maxRetransmits = maxRetransmits
-
-      pos += USERDATA_MAX_LENGTH
-      this.localTsn = tsnPlusOne(this.localTsn)
-      chunks.push(chunk)
+    const chunk = new DataChunk(0, undefined)
+    chunk.flags = 0
+    if (!ordered) {
+      chunk.flags = SCTP_DATA_UNORDERED
     }
 
-    chunks.forEach((chunk) => {
-      this.outboundQueue.push(chunk)
-    })
+    chunk.flags |= SCTP_DATA_FIRST_FRAG
+    chunk.flags |= SCTP_DATA_LAST_FRAG
+    chunk.tsn = this.localTsn
+    chunk.streamId = streamId
+    chunk.streamSeqNum = streamSeqNum
+    chunk.protocol = ppId
+    chunk.userData = userData
+    chunk.bookSize = chunk.userData.length
+    chunk.expiry = expiry
+    chunk.maxRetransmits = maxRetransmits
+
+    this.localTsn = tsnPlusOne(this.localTsn)
 
     if (ordered) {
       this.outboundStreamSeq[streamId] = uint16Add(streamSeqNum, 1)
     }
 
-    // if (!this.timer3Handle) {
-    this.transmit()
-    // }
+    this.transmit(chunk)
   }
 
-  private transmit() {
+  private transmit(chunk: DataChunk) {
     // """
     // Transmit outbound data.
     // """
 
-    // # send FORWARD TSN
-    if (this.forwardTsnChunk) {
-      this.sendChunk(this.forwardTsnChunk)
-      this.forwardTsnChunk = undefined
-    }
+    this.flightSizeIncrease(chunk)
 
-    const burstSize = this.fastRecoveryExit != undefined ? 2 * USERDATA_MAX_LENGTH : 4 * USERDATA_MAX_LENGTH
+    // # update counters
+    chunk.sentCount++
+    chunk.sentTime = Date.now() / 1000
 
-    const cwnd = Math.min(this.flightSize + burstSize, this.cwnd)
-
-    let retransmitEarliest = true
-    for (const dataChunk of this.sentQueue) {
-      if (dataChunk.retransmit) {
-        if (this.fastRecoveryTransmit) {
-          this.fastRecoveryTransmit = false
-        } else if (this.flightSize >= cwnd) {
-          return
-        }
-        this.flightSizeIncrease(dataChunk)
-
-        dataChunk.misses = 0
-        dataChunk.retransmit = false
-        dataChunk.sentCount++
-        this.sendChunk(dataChunk)
-      }
-      retransmitEarliest = false
-    }
-
-    // for performance todo fix
-    while (this.outboundQueue.length > 0) {
-      const chunk = this.outboundQueue.shift()
-      if (!chunk) return
-
-      this.sentQueue.push(chunk)
-      this.flightSizeIncrease(chunk)
-
-      // # update counters
-      chunk.sentCount++
-      chunk.sentTime = Date.now() / 1000
-
-      this.sendChunk(chunk)
-      // if (!this.timer3Handle) {
-      //   this.timer3Start();
-      // }
-    }
+    this.sendChunk(chunk)
   }
 
   transmitReconfigRequest() {
@@ -706,8 +604,8 @@ export class SCTP {
     log('sendResetRequest', streamId)
     const chunk = new DataChunk(0, undefined)
     chunk.streamId = streamId
-    this.outboundQueue.push(chunk)
-    this.transmit()
+    // this.outboundQueue.push(chunk)
+    this.transmit(chunk)
   }
 
   private flightSizeIncrease(chunk: DataChunk) {
@@ -813,7 +711,7 @@ export class SCTP {
   }
 
   static getCapabilities() {
-    return new RTCSctpCapabilities(65536)
+    return new RTCSctpCapabilities(USERDATA_MAX_LENGTH)
   }
 
   setRemotePort(port: number) {
@@ -905,7 +803,6 @@ export class SCTP {
     this.setState(SCTP_STATE.CLOSED)
     clearTimeout(this.timer1Handle)
     clearTimeout(this.timer2Handle)
-    // clearTimeout(this.timer3Handle);
   }
 
   abort() {
@@ -915,107 +812,6 @@ export class SCTP {
 
   private removeAllListeners() {
     Object.values(this.stateChanged).forEach((v) => v.allUnsubscribe())
-  }
-}
-
-export class InboundStream {
-  reassembly: DataChunk[] = []
-  streamSequenceNumber = 0 // SSN
-
-  constructor() {}
-
-  addChunk(chunk: DataChunk) {
-    if (this.reassembly.length === 0 || uint32Gt(chunk.tsn, this.reassembly[this.reassembly.length - 1].tsn)) {
-      this.reassembly.push(chunk)
-      return
-    }
-
-    for (const [i, v] of enumerate(this.reassembly)) {
-      if (v.tsn === chunk.tsn) throw new Error('duplicate chunk in reassembly')
-
-      if (uint32Gt(v.tsn, chunk.tsn)) {
-        this.reassembly.splice(i, 0, chunk)
-        break
-      }
-    }
-  }
-
-  *popMessages(): Generator<[number, number, Buffer]> {
-    let pos = 0
-    let startPos: number | undefined
-    let expectedTsn: number
-    let ordered: boolean | undefined
-    while (pos < this.reassembly.length) {
-      const chunk = this.reassembly[pos]
-      if (startPos === undefined) {
-        ordered = !(chunk.flags & SCTP_DATA_UNORDERED)
-        if (!(chunk.flags & SCTP_DATA_FIRST_FRAG)) {
-          if (ordered) {
-            break
-          } else {
-            pos++
-            continue
-          }
-        }
-        if (ordered && uint16Gt(chunk.streamSeqNum, this.streamSequenceNumber)) {
-          break
-        }
-        expectedTsn = chunk.tsn
-        startPos = pos
-      } else if (chunk.tsn !== expectedTsn!) {
-        if (ordered!) {
-          break
-        } else {
-          startPos = undefined
-          pos++
-          continue
-        }
-      }
-
-      if (chunk.flags & SCTP_DATA_LAST_FRAG) {
-        const arr = this.reassembly
-          .slice(startPos, pos + 1)
-          .map((c) => c.userData)
-          .reduce((acc, cur) => {
-            acc.push(cur)
-            acc.push(Buffer.from(''))
-            return acc
-          }, [] as Buffer[])
-        arr.pop()
-        const userData = Buffer.concat(arr)
-
-        this.reassembly = [...this.reassembly.slice(0, startPos), ...this.reassembly.slice(pos + 1)]
-        if (ordered && chunk.streamSeqNum === this.streamSequenceNumber) {
-          this.streamSequenceNumber = uint16Add(this.streamSequenceNumber, 1)
-        }
-        pos = startPos
-        yield [chunk.streamId, chunk.protocol, userData]
-      } else {
-        pos++
-      }
-      expectedTsn = tsnPlusOne(expectedTsn)
-    }
-  }
-
-  pruneChunks(tsn: number) {
-    // """
-    // Prune chunks up to the given TSN.
-    // """
-
-    let pos = -1,
-      size = 0
-
-    for (const [i, chunk] of this.reassembly.entries()) {
-      if (uint32Gte(tsn, chunk.tsn)) {
-        pos = i
-        size += chunk.userData.length
-      } else {
-        break
-      }
-    }
-
-    this.reassembly = this.reassembly.slice(pos + 1)
-    return size
   }
 }
 

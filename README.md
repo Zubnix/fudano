@@ -5,11 +5,10 @@ This project is originally cloned from [werift](https://github.com/shinyoshiaki/
 
 Planned Changes:
 - [ ] Only unordered, unreliable data channels.
-- [ ] DataChannels must be negotiated as non-negotiated channels require an initial ordered & reliable `WEBRTC_DCEP`.
 - [x] SCTP congestion control removed, which allows for sending UDP packets as fast as the connection can handle them.
-- [ ] Chunking removed. No fragmenting and queuing i.e. packets are immediately send out.
-- [ ] Maximum Transmission Unit (MTU) size set to 1200 bytes which is the maximum a single UDP packet with a SCTP header can handle.
-- [ ] No SCTP SACK messages are sent back.
+- [x] Chunking removed on send. No fragmenting and queuing i.e. packets are immediately send out.
+- [x] Chunk reconstruction removed on receive.
+- [x] Maximum Transmission Unit (MTU) size set to 1200 bytes which is the maximum a single UDP packet with a SCTP header can handle.
 - [x] Only binary messages can be sent and received. No implicit string conversions.
 - [x] All audio and video related logic removed.
 
@@ -25,8 +24,8 @@ Is this really faster than existing solutions?
 ==
 Some unscientific testing using a server with a 1Gbps upload and a client with 300Mbps download with a ~15ms ping, the following maximum transfer rates were observed:
 
-- Using [node-webrtc](https://github.com/node-webrtc/node-webrtc): ~10Mbps
-- Using [node-datachannel](https://github.com/murat-dogan/node-datachannel): ~15Mbps
+- Using [node-webrtc](https://github.com/node-webrtc/node-webrtc): ~15Mbps
+- Using [node-datachannel](https://github.com/murat-dogan/node-datachannel): ~25Mbps
 - Using this library: ~75Mbps
 
 As always: YMMV

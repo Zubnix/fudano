@@ -146,7 +146,9 @@ export class ForwardTsnChunk extends Chunk {
     return ForwardTsnChunk.type
   }
 
-  set body(_: Buffer) {}
+  set body(_: Buffer) {
+    /*noop*/
+  }
 
   get body() {
     const body = Buffer.from(jspack.Pack('!L', [this.cumulativeTsn]))
@@ -451,31 +453,26 @@ export function decodeParams(body: Buffer): [number, Buffer][] {
   return params
 }
 
-export function parsePacket(data: Buffer): [number, number, number, Chunk[]] {
+export function parsePacket(data: Buffer): [number, number, number, Chunk] {
   if (data.length < 12) throw new Error('SCTP packet length is less than 12 bytes')
+  if (data.length > 1200) throw new Error('SCTP packet length too big, > 1200 bytes')
+
+  // Not supper important as UDP also does crc16 itself, unless you really want to be sure.
+  // const checkSum = data.readUInt32LE(8)
+  // const expect = crc32c(Buffer.concat([data.slice(0, 8), Buffer.from('\x00\x00\x00\x00'), data.slice(12)]))
+  // if (checkSum !== expect) throw new Error('SCTP packet has invalid checksum')
 
   const [sourcePort, destinationPort, verificationTag] = jspack.Unpack('!HHL', data)
 
-  const checkSum = data.readUInt32LE(8)
-
-  const expect = crc32c(Buffer.concat([data.slice(0, 8), Buffer.from('\x00\x00\x00\x00'), data.slice(12)]))
-
-  if (checkSum !== expect) throw new Error('SCTP packet has invalid checksum')
-
-  const chunks: Chunk[] = []
-  let pos = 12
-  while (pos + 4 <= data.length) {
-    const [chunkType, chunkFlags, chunkLength] = jspack.Unpack('!BBH', data.slice(pos))
-    const chunkBody = data.slice(pos + 4, pos + chunkLength)
-    const ChunkClass = CHUNK_BY_TYPE[chunkType.toString()]
-    if (ChunkClass) {
-      chunks.push(new ChunkClass(chunkFlags, chunkBody))
-    } else {
-      throw new Error('unknown')
-    }
-    pos += chunkLength + padL(chunkLength)
+  const pos = 12
+  const [chunkType, chunkFlags, chunkLength] = jspack.Unpack('!BBH', data.slice(pos))
+  const chunkBody = data.slice(pos + 4, pos + chunkLength)
+  const ChunkClass = CHUNK_BY_TYPE[chunkType.toString()]
+  if (ChunkClass) {
+    return [sourcePort, destinationPort, verificationTag, new ChunkClass(chunkFlags, chunkBody)]
+  } else {
+    throw new Error('unknown incoming chunk type')
   }
-  return [sourcePort, destinationPort, verificationTag, chunks]
 }
 
 export function serializePacket(sourcePort: number, destinationPort: number, verificationTag: number, chunk: Chunk) {
@@ -486,7 +483,5 @@ export function serializePacket(sourcePort: number, destinationPort: number, ver
   const checkSumBuf = Buffer.alloc(4)
   checkSumBuf.writeUInt32LE(checksum, 0)
 
-  const packet = Buffer.concat([header, checkSumBuf, body])
-
-  return packet
+  return Buffer.concat([header, checkSumBuf, body])
 }

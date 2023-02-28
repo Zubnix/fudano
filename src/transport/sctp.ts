@@ -80,15 +80,11 @@ export class RTCSctpTransport {
           }
         }),
       ].map((e) => e.unSubscribe),
-      () =>
-        (this.sctp.onSackReceived = () => {
-          /*noop*/
-        }),
     ]
 
-    this.sctp.onSackReceived = () => {
-      this.dataChannelFlush()
-    }
+    // this.sctp.onSackReceived = () => {
+    //   this.dataChannelFlush()
+    // }
   }
 
   private get isServer() {
@@ -249,7 +245,6 @@ export class RTCSctpTransport {
     // """
 
     if (this.sctp.associationState != SCTP_STATE.ESTABLISHED) return
-    if (this.sctp.outboundQueue.length > 0) return
 
     while (this.dataChannelQueue.length > 0) {
       const [channel, protocol, userData] = this.dataChannelQueue.shift()!
@@ -281,7 +276,7 @@ export class RTCSctpTransport {
     }
   }
 
-  datachannelSend = (channel: RTCDataChannel, data: Buffer) => {
+  datachannelSend(channel: RTCDataChannel, data: Buffer) {
     channel.addBufferedAmount(data.length)
 
     this.dataChannelQueue.push([channel, WEBRTC_BINARY, data])
@@ -345,12 +340,15 @@ export class RTCSctpCapabilities {
 
 class BridgeDtls implements Transport {
   constructor(private dtls: RTCDtlsTransport) {}
+
   set onData(onData: (buf: Buffer) => void) {
     this.dtls.dataReceiver = onData
   }
+
   readonly send = (data: Buffer) => {
     return this.dtls.sendData(data)
   }
+
   close() {
     /*noop*/
   }

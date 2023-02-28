@@ -4,6 +4,7 @@ import { Event } from 'rx.mini'
 import { EventTarget } from './helper'
 import { RTCSctpTransport } from './transport/sctp'
 import { Callback, CallbackWithValue } from './types/util'
+import { USERDATA_MAX_LENGTH } from './sctp/sctp'
 
 const log = debug('werift:packages/webrtc/src/dataChannel.ts')
 
@@ -121,6 +122,9 @@ export class RTCDataChannel extends EventTarget {
   }
 
   send(data: Buffer) {
+    if (data.byteLength > USERDATA_MAX_LENGTH) {
+      throw new Error('Message too big. > 1200 bytes.')
+    }
     this.transport.datachannelSend(this, data)
   }
 
