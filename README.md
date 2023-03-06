@@ -29,3 +29,7 @@ Some unscientific testing using a server with a 1Gbps upload and a client with 3
 - Using this library: ~75Mbps
 
 As always: YMMV
+
+DISCLAIMER
+=
+This library violates the SCTP standard in various ways. Strange bugs might popup when using it.
